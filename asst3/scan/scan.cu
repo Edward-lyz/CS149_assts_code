@@ -45,7 +45,7 @@ static inline int nextPow2(int n) {
 void exclusive_scan(int* input, int N, int* result)
 {
 
-    // CS149 TODO:
+    // TODO:
     //
     // Implement your exclusive scan implementation here.  Keep in
     // mind that although the arguments to this function are device
@@ -149,7 +149,7 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 // Returns the total number of pairs found
 int find_repeats(int* device_input, int length, int* device_output) {
 
-    // CS149 TODO:
+    // TODO:
     //
     // Implement this function. You will probably want to
     // make use of one or more calls to exclusive_scan(), as well as

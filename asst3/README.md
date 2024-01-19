@@ -1,4 +1,4 @@
-# Assignment 3: A Simple CUDA Renderer #
+# Assignment 3: A Simple CUDA Renderer
 
 **Due:  Wed Nov 8, 11:59PM PST**
 
@@ -6,14 +6,14 @@
 
 ![My Image](handout/teaser.jpg?raw=true)
 
-## Overview ##
+## Overview
 
 In this assignment you will write a parallel renderer in CUDA that draws colored circles. 
 While this renderer is very simple, parallelizing the renderer will require you to design and implement data structures 
 that can be efficiently constructed and manipulated in parallel. This is a challenging
 assignment so you are advised to start early. __Seriously, you are advised to start early.__ Good luck!
 
-## Environment Setup ##
+## Environment Setup
 
 1. You will collect results (i.e. run performance tests) for this assignment on GPU-enabled VMs on Amazon Web Services (AWS). Please follow the instructions in [cloud_readme.md](cloud_readme.md) for setting up a machine to run the assignment.
 
@@ -27,7 +27,7 @@ Table G.1 in the [CUDA C Programming Guide](https://docs.nvidia.com/cuda/cuda-c-
 
 For C++ questions (like what does the _virtual_ keyword mean), the [C++ Super-FAQ](https://isocpp.org/faq) is a great resource that explains things in a way that's detailed yet easy to understand (unlike a lot of C++ resources), and was co-written by Bjarne Stroustrup, the creator of C++!
 
-### WARNING ###
+### WARNING
 
 To save resources, the VMs will auto stop after 15 minutes of < 2% CPU activity. 
 
@@ -38,6 +38,7 @@ Because of this, we recommend that you develop your code locally, and either cop
 If you have not set up a private git repo before here are some resources that should help you get started. Make sure that the github repo is private to ensure that you are not breaking the honor code. 
 
 Useful links to set up git:
+
 - [adding a remote repository](https://docs.github.com/en/get-started/getting-started-with-git/managing-remote-repositories) to connect to your private repo.
 - [adding ssh key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account) to set up a ssh key. We recommending doing this without a password and with the default name id_rsa.
 
@@ -45,17 +46,17 @@ Once you have a ssh key and know how to connect to a remote repository, you will
 
 1. Copy your private key to the server's .ssh folder (id_rsa in your .ssh) file
 2. Create a file named config in the server and locally with the following lines.
-~~~
-Host github.com
+   
+   ```
+   Host github.com
     HostName github.com
     User git
     IdentityFile ~/.ssh/id_rsa
-~~~
+   ```
 
 You should now be able to pull and push commits from the server and locally!
 
-
-## Part 1: CUDA Warm-Up 1: SAXPY (5 pts) ##
+## Part 1: CUDA Warm-Up 1: SAXPY (5 pts)
 
 To gain a bit of practice writing CUDA programs your warm-up task is to re-implement the SAXPY function
 from Assignment 1 in CUDA. Starter code for this part of the assignment is located in the `/saxpy` directory
@@ -71,23 +72,23 @@ As part of your implementation, add timers around the CUDA kernel invocation in 
 
 __When adding your timing code in the latter case, you'll need to be careful:__ By defult a CUDA kernel's execution on the GPU is *asynchronous* with the main application thread running on the CPU.  For example, if you write code that looks like this:
 
-~~~~
+```
 double startTime = CycleTimer::currentSeconds();
 saxpy_kernel<<<blocks, threadsPerBlock>>>(N, alpha, device_x, device_y, device_result);
 double endTime = CycleTimer::currentSeconds();
-~~~~
+```
 
 You'll measure a kernel execution time that seems amazingly fast! (Because you are only timing the cost of the API call itself, not the cost of actually executing the resulting computation on the GPU.  
 
 Therefore, you will want to place a call to `cudaDeviceSynchronize()` following the
 kernel call to wait for completion of all CUDA work on the GPU.  This call to `cudaDeviceSynchronize()` returns when all prior CUDA work on the GPU has completed. Note that `cudaDeviceSynchronize()` is not necessary after the `cudaMemcpy()` to ensure the memory transfer to the GPU is complete, since `cudaMempy()` is synchronous under the conditions we are using it. (For those that wish to know more, see [this documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/api-sync-behavior.html#api-sync-behavior__memcpy-sync).)
 
-~~~~
+```
 double startTime = CycleTimer::currentSeconds();
 saxpy_kernel<<<blocks, threadsPerBlock>>>(N, alpha, device_x, device_y, device_result);
 cudaDeviceSynchronize();
 double endTime = CycleTimer::currentSeconds();
-~~~~
+```
 
 Note that in your measurements that include the time to transfer to and from the CPU, a call to `cudaDeviceSynchronize()` __is not__ necessary before the final timer (after your call to `cudaMemcopy()` that returns data to the CPU) because `cudaMemcpy()` will not return to the calling thread until after the copy is complete. 
 
@@ -97,13 +98,13 @@ SAXPY (recall your results from saxpy on Program 5 from Assignment 1)?
 __Question 2.__ Compare and explain the difference between the results
 provided by two sets of timers (timing only the kernel execution vs. timing the entire process of moving data to the GPU and back in addition to the kernel execution). Are the bandwidth values observed *roughly* consistent with the reported bandwidths available to the different components of the machine? (You should use the web to track down the memory bandwidth of an NVIDIA T4 GPU. Hint: <https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/tesla-t4/t4-tensor-core-datasheet-951643.pdf>. The expected bandwidth of memory bus of AWS is 4 GB/s, which does not match that of a 16-lane [PCIe 3.0](https://en.wikipedia.org/wiki/PCI_Express). Several factors prevent peak bandwidth, including CPU motherboard chipset performance and whether or not the host CPU memory used as the source of the transfer is “pinned” — the latter allows the GPU to directly access memory without going through virtual memory address translation. If you are interested, you can find more info here: <https://kth.instructure.com/courses/12406/pages/optimizing-host-device-data-communication-i-pinned-host-memory>)
 
-## Part 2: CUDA Warm-Up 2: Parallel Prefix-Sum (10 pts) ##
+## Part 2: CUDA Warm-Up 2: Parallel Prefix-Sum (10 pts)
 
 Now that you're familiar with the basic structure and layout of CUDA programs, as a second exercise you are asked to come up with parallel implementation of the function `find_repeats` which, given a list of integers `A`, returns a list of all indices `i` for which `A[i] == A[i+1]`.
 
 For example, given the array `{1,2,2,1,1,1,3,5,3,3}`, your program should output the array `{1,3,4,8}`.
 
-#### Exclusive Prefix Sum ####
+#### Exclusive Prefix Sum
 
 We want you to implement `find_repeats` by first implementing parallel exclusive prefix-sum operation. 
 
@@ -111,12 +112,12 @@ Exlusive prefix sum takes an array `A` and produces a new array `output` that ha
 
 The following "C-like" code is an iterative version of scan.  In the pseudocode before, we use `parallel_for` to indicate potentially parallel loops.   This is the same algorithm we discussed in class: <http://cs149.stanford.edu/fall23/lecture/dataparallel/slide_17> 
 
-~~~~
+```
 void exclusive_scan_iterative(int* start, int* end, int* output) {
 
     int N = end - start;
     memmove(output, start, N*sizeof(int));
-    
+
     // upsweep phase
     for (int two_d = 1; two_d <= N/2; two_d*=2) {
         int two_dplus1 = 2*two_d;
@@ -137,14 +138,15 @@ void exclusive_scan_iterative(int* start, int* end, int* output) {
         }
     }
 }
-~~~~
+```
 
 We would like you to use this algorithm to implement a version of parallel prefix sum in CUDA.  You must implement `exclusive_scan` function in `scan/scan.cu`. Your implementation will consist of both host and device code.  The implementation will require multiple CUDA kernel launches (one for each parallel_for loop in the pseudocode above).
 
 **Note:** In the starter code, the reference solution scan implementation above assumes that the input array's length (`N`) is a power of 2.  In the `cudaScan` function, we solve this problem by rounding the input array length to the next power of 2 when allocating the corresponding buffers on the GPU.  However, the code only copies back `N` elements from the GPU buffer back to the CPU buffer.  This fact should simplify your CUDA implementation.
 
 Compilation produces the binary `cudaScan`.  Commandline usage is as follows:
-~~~~
+
+```
 Usage: ./cudaScan [options] 
 
 Program Options:
@@ -153,9 +155,9 @@ Program Options:
   -n  --arraysize <INT>  Number of elements in arrays
   -t  --thrust           Use Thrust library implementation
   -?  --help             This message
-~~~~
+```
 
-#### Implementing "Find Repeats" Using Prefix Sum ####
+#### Implementing "Find Repeats" Using Prefix Sum
 
 Once you have written `exclusive_scan`, implement the function `find_repeats` in `scan/scan.cu`. This will involve writing more device code, in addition to one or more calls to `exclusive_scan()`. Your code should write the list of repeated elements into the provided output pointer (in device memory), and then return the size of the output list.  
 
@@ -165,7 +167,7 @@ When calling your `exclusive_scan` implementation, remember that the contents of
 
 For reference, a scan score table is provided below, showing the performance of a simple CUDA implementation on a K80 GPU.  To check the correctness and performance score of your `scan` and `find_repeats` implementation, run **`./checker.pl scan`** and **`./checker.pl find_repeats`** respectively.  Doing so will produce a reference table as shown below; your score is based solely on the performance of your code.  In order to get full credit, your code must perform within 20% of the provided reference solution.  
 
-~~~~
+```
 -------------------------
 Scan Score Table:
 -------------------------
@@ -179,7 +181,7 @@ Scan Score Table:
 -------------------------------------------------------------------------
 |                                   | Total score:    | 0/5             |
 -------------------------------------------------------------------------
-~~~~
+```
 
 This part of the assignment is largely about getting more practice with writing CUDA and thinking in a data parallel manner, and not about performance tuning code. Getting full performance points on this part of the assignment should not require much (or really any) performance tuning, just a direct port of the algorithm pseudocode to CUDA.  However, there's one trick:  a naive implementation of scan might launch N CUDA threads for each iteration of the parallel loops in the pseudocode, and using conditional execution in the kernel to determine which threads actually need to do work.  Such a solution will not be performant! (Consider the last outmost loop iteration of the upsweep phase, where only two threads would do work!).  A full credit solution will only launch one CUDA thread for each iteration of the innermost parallel loops.
 
@@ -190,7 +192,7 @@ You can also use the `-n <size>` option to change the length of the input array.
 
 The argument `--thrust` will use the [Thrust Library's](http://thrust.github.io/) implementation of [exclusive scan](http://thrust.github.io/doc/group__prefixsums.html).  __Up to two points of extra credit for anyone that can create an implementation is competitive with Thrust.__
 
-## Part 3: A Simple Circle Renderer (85 pts) ##
+## Part 3: A Simple Circle Renderer (85 pts)
 
 Now for the real show!
 
@@ -203,7 +205,7 @@ The assignment starter code contains two versions of the renderer: a sequential,
 reference implementation, implemented in `refRenderer.cpp`, and an *incorrect* parallel CUDA implementation in
 `cudaRenderer.cu`.
 
-### Renderer Overview ###
+### Renderer Overview
 
 We encourage you to familiarize yourself with the structure of the renderer codebase by inspecting the reference
 implementation in `refRenderer.cpp`. The method `setup` is called prior to rendering the first frame. In your CUDA-accelerated
@@ -231,6 +233,7 @@ The figure below illustrates the basic algorithm for computing circle-pixel cove
 ![Point in circle test](handout/point_in_circle.jpg?raw=true "A simple algorithm for computing the contribution of a circle to the output image: All pixels within the circle's bounding box are tested for coverage. For each pixel in the bounding box, the pixel is considered to be covered by the circle if its center point (black dots) is contained within the circle. Pixel centers that are inside the circle are colored red. The circle's contribution to the image will be computed only for covered pixels.")
 
 An important detail of the renderer is that it renders __semi-transparent__ circles. Therefore, the color of any one pixel is not the color of a single circle, but the result of blending the contributions of all the semi-transparent circles overlapping the pixel (note the "blend contribution" part of the pseudocode above).  The renderer represents the color of a circle via a 4-tuple of red (R), green (G), blue (B), and opacity (alpha) values (RGBA). Alpha = 1 corresponds to a fully opaque circle.  Alpha = 0 corresponds to a fully transparent circle.  To draw a semi-transparent circle with color `(C_r, C_g, C_b, C_alpha)` on top of a pixel with color `(P_r, P_g, P_b)`, the renderer uses the following math:
+
 <pre>
    result_r = C_alpha * C_r + (1.0 - C_alpha) * P_r
    result_g = C_alpha * C_g + (1.0 - C_alpha) * P_g
@@ -241,7 +244,7 @@ Notice that composition is not commutative (object X over Y does not look the sa
 
 ![Ordering](handout/order.jpg?raw=true "The renderer must be careful to generate output that is the same as what is generated when sequentially drawing all circles in the order provided by the application.")
 
-### CUDA Renderer ###
+### CUDA Renderer
 
 After familiarizing yourself with the circle rendering algorithm as implemented in the reference code, now
 study the CUDA implementation of the renderer provided in `cudaRenderer.cu`. You can run the CUDA
@@ -253,20 +256,19 @@ a circle renderer, it contains several major errors that you will fix in this as
 implementation does not ensure image update is an atomic operation and it does not preserve the required
 order of image updates (the ordering requirement will be described below).
 
-
-### Renderer Requirements ###
+### Renderer Requirements
 
 Your parallel CUDA renderer implementation must maintain two invariants that are preserved trivially in
 the sequential implementation.
 
 1. __Atomicity:__ All image update operations must be atomic. The critical region includes reading the
-four 32-bit floating-point values (the pixel's rgba color), blending the contribution of the current circle with
-the current image value, and then writing the pixel's color back to memory.
+   four 32-bit floating-point values (the pixel's rgba color), blending the contribution of the current circle with
+   the current image value, and then writing the pixel's color back to memory.
 2. __Order:__ Your renderer must perform updates to an image pixel in *circle input order*. That is, if
-circle 1 and circle 2 both contribute to pixel P, any image updates to P due to circle 1 must be applied to the
-image before updates to P due to circle 2. As discussed above, preserving the ordering requirement
-allows for correct rendering of transparent circles. (It has a number of other benefits for graphics
-systems. If curious, talk to Kayvon.) __A key observation is that the definition of order only specifies the order of updates to the same pixel.__  Thus, as shown below, there are no ordering requirements between circles that do not contribute to the same pixel. These circles can be processed independently.
+   circle 1 and circle 2 both contribute to pixel P, any image updates to P due to circle 1 must be applied to the
+   image before updates to P due to circle 2. As discussed above, preserving the ordering requirement
+   allows for correct rendering of transparent circles. (It has a number of other benefits for graphics
+   systems. If curious, talk to Kayvon.) __A key observation is that the definition of order only specifies the order of updates to the same pixel.__  Thus, as shown below, there are no ordering requirements between circles that do not contribute to the same pixel. These circles can be processed independently.
 
 ![Dependencies](handout/dependencies.jpg?raw=true "The contributions of circles 1, 2, and 3 must be applied to overlapped pixels in the order the circles are provided to the renderer.")
 
@@ -276,7 +278,7 @@ You will see horizontal streaks through the resulting images, as shown below. Th
 
 ![Order_errors](handout/bug_example.jpg?raw=true "Errors in the output due to lack of atomicity in frame-buffer update (notice streaks in bottom of image).")
 
-### What You Need To Do ###
+### What You Need To Do
 
 __Your job is to write the fastest, correct CUDA renderer implementation you can__. You may take any approach you
 see fit, but your renderer must adhere to the atomicity and order requirements specified above. A solution that does not meet both requirements will be given no more than 12 points on part 3 of the assignment. We have already given you such a solution!
@@ -289,9 +291,9 @@ We recommend that you:
 2. Then determine what performance problem is with your solution.
 3. At this point the real thinking on the assignment begins... (Hint: the circle-intersects-box tests provided to you in `circleBoxTest.cu_inl` are your friend.  You are encouraged to use these subroutines.)
 
-
 Following are commandline options to `./render`: 
-~~~~
+
+```
 Usage: ./render [options] scenename
 Valid scenenames are: rgb, rgby, rand10k, rand100k, biglittle, littlebig, pattern,
                       bouncingballs, fireworks, hypnosis, snow, snowsingle
@@ -303,13 +305,13 @@ Program Options:
   -c  --check                   Check correctness of CUDA output against CPU reference
   -i  --interactive             Render output to interactive display
   -?  --help                    This message
-~~~~
+```
 
 **Checker code:** To detect correctness of the program, `render` has a convenient `--check` option. This option runs the sequential version of the reference CPU renderer along with your CUDA renderer and then compares the resulting images to ensure correctness. The time taken by your CUDA renderer implementation is also printed.
 
 We provide a total of five circle datasets you will be graded on.  However, in order to receive full credit, your code must pass all of our correctness-tests.  To check the correctness and performance score of your code, run **`./checker.py`** (notice the .py extension) in the `/render` directory. If you run it on the starter code, the program will print a table like the following, along with the results of our entire test set: 
 
-~~~~
+```
 ------------
 Score table:
 ------------
@@ -325,7 +327,7 @@ Score table:
 --------------------------------------------------------------------------
 |                                    | Total score:    | 0/72            |
 --------------------------------------------------------------------------
-~~~~
+```
 
 Note: on some runs, you *may* receive credit for some of these scenes, since the provided renderer's runtime is non-deterministic sometimes it might be correct. This doesn't change the fact that the current CUDA renderer is in general incorrect.  
 
@@ -342,21 +344,26 @@ Aspects of your work that you should mention in the write-up include:
 5. What, if any, steps did you take to reduce communication requirements (e.g., synchronization or main memory bandwidth requirements)?
 6. Briefly describe how you arrived at your final solution. What other approaches did you try along the way. What was wrong with them?
 
-### Grading Guidelines ###
+### Grading Guidelines
 
 * The write-up for the assignment is worth 7 points.
+
 * Your implementation is worth 72 points. These are equally divided into 12 points per scene as follows:
-    - 2 correctness points per scene. 
-    - 10 performance points per scene (only obtainable if the solution is correct).  Your performance will be graded with respect to the performance of a provided benchmark reference renderer, T<sub>ref</sub>: 
-        - No performance points will be given for solutions having time (T) 10 times the magnitude of T<sub>ref</sub>. 
-        - Full performance points will be given for solutions within 20% of the optimized solution ( T < 1.20 * T<sub>ref</sub> )
-        - For other values of T (for 1.20 T<sub>ref</sub> <= T < 10 * T<sub>ref</sub>), your performance score on a scale 1 to 10 will be calculated as: `10 * T_ref / T`.
+  
+  - 2 correctness points per scene. 
+  - 10 performance points per scene (only obtainable if the solution is correct).  Your performance will be graded with respect to the performance of a provided benchmark reference renderer, T<sub>ref</sub>: 
+    - No performance points will be given for solutions having time (T) 10 times the magnitude of T<sub>ref</sub>. 
+    - Full performance points will be given for solutions within 20% of the optimized solution ( T < 1.20 * T<sub>ref</sub> )
+    - For other values of T (for 1.20 T<sub>ref</sub> <= T < 10 * T<sub>ref</sub>), your performance score on a scale 1 to 10 will be calculated as: `10 * T_ref / T`.
+
 * Your implementation's performance on the class leaderboard is worth the final 6 points. Submission and grading details for the leaderboard will be detailed in a subsequent Ed post.
 
 * Up to five points extra credit (instructor discretion) for solutions that achieve significantly greater performance than required. Your write up must clearly explain your approach thoroughly.
+
 * Up to five points extra credit (instructor discretion) for a high-quality parallel CPU-only renderer implementation that achieves good utilization of all cores and SIMD vector units of the cores. Feel free to use any tools at your disposal (e.g., SIMD intrinsics, ISPC, pthreads).  To receive credit you should analyze the performance of your GPU and CPU-based solutions and discuss the reasons for differences in implementation choices made.
 
 So the total points for this project is as follows:
+
 * part 1 (5 points)
 * part 2 (10 points)
 * part 3 write up (7 points)
@@ -364,23 +371,24 @@ So the total points for this project is as follows:
 * part 3 leaderboard (6 points)
 * potential __extra__ credit (up to 10 points)
 
-## Assignment Tips and Hints ##
+## Assignment Tips and Hints
 
 Below are a set of tips and hints compiled from previous years.  Note that there are various ways to implement your renderer and not all hints may apply to your approach.
 
 * There are two potential axes of parallelism in this assignment. One axis is *parallelism across pixels* another is *parallelism across circles* (provided the ordering requirement is respected for overlapping circles).  Solutions will need to exploit both types of parallelism, potentially at different parts of the computation.
 * The circle-intersects-box tests provided to you in `circleBoxTest.cu_inl` are your friend.  You are encouraged to use these subroutines.
 * The shared-memory prefix-sum operation provided in `exclusiveScan.cu_inl` may be valuable to you on this assignment (not all solutions may choose to use it). See the simple description of a prefix-sum [here](http://thrust.github.io/doc/group__prefixsums.html). We
-have provided an implementation of an exclusive prefix-sum on a __power-of-two-sized__ arrays in shared memory.  __The provided code does not work on non-power-of-two inputs and IT ALSO REQUIRES THAT THE NUMBER OF THREADS IN THE THREAD BLOCK BE THE SIZE OF THE ARRAY. PLEASE READ THE COMMENTS IN THE CODE.__
+  have provided an implementation of an exclusive prefix-sum on a __power-of-two-sized__ arrays in shared memory.  __The provided code does not work on non-power-of-two inputs and IT ALSO REQUIRES THAT THE NUMBER OF THREADS IN THE THREAD BLOCK BE THE SIZE OF THE ARRAY. PLEASE READ THE COMMENTS IN THE CODE.__
 * You are allowed to use the [Thrust library](http://thrust.github.io/) in your implementation if you so choose.  Thrust is not necessary to achieve the performance of the optimized CUDA reference implementations.  There is one popular way of solving the problem that uses the shared memory prefix-sum implementation that we give you.  There another popular way that uses the prefix-sum routines in the Thrust library.  Both are valid solution strategies.
 * Is there data reuse in the renderer? What can be done to exploit this reuse?
 * How will you ensure atomicity of image update since there is no CUDA language primitive that performs the logic of the image update operation atomically? Constructing a lock out of global memory atomic operations is one solution, but keep in mind that even if your image update is atomic, the updates must be performed in the required order.  __We suggest that you think about ensuring order in your parallel solution first, and only then consider the atomicity problem (if it still exists at all) in your solution.__
 * If you find yourself with free time, have fun making your own scenes!
 
-### Catching CUDA Errors ###
+### Catching CUDA Errors
 
 By default, if you access an array out of bounds, allocate too much memory, or otherwise cause an error, CUDA won't normally inform you; instead it will just fail silently and return an error code. You can use the following macro (feel free to modify it) to wrap CUDA calls:
-~~~~
+
+```
 #define DEBUG
 
 #ifdef DEBUG
@@ -397,36 +405,39 @@ inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=
 #else
 #define cudaCheckError(ans) ans
 #endif
-~~~~
+```
 
 Note that you can undefine DEBUG to disable error checking once your code is correct for improved performance.
 
 You can then wrap CUDA API calls to process their returned errors as such:
-~~~~
+
+```
 cudaCheckError( cudaMalloc(&a, size*sizeof(int)) );
-~~~~
+```
 
 Note that you can't wrap kernel launches directly. Instead, their errors will be caught on the next CUDA call you wrap:
-~~~~
+
+```
 kernel<<<1,1>>>(a); // suppose kernel causes an error!
 cudaCheckError( cudaDeviceSynchronize() ); // error is printed on this line
-~~~~
+```
 
 All CUDA API functions, `cudaDeviceSynchronize`, `cudaMemcpy`, `cudaMemset`, and so on can be wrapped. 
 
 __IMPORTANT:__ if a CUDA function error'd previously, but wasn't caught, that error will show up in the next error check, even if that wraps a different function. For example:
-~~~~
+
+```
 ...
 line 742: cudaMalloc(&a, -1); // executes, then continues
 line 743: cudaCheckError(cudaMemcpy(a,b)); // prints "CUDA Error: out of memory at cudaRenderer.cu:743"
 ...
-~~~~
+```
 
 Therefore, while debugging, it's recommended that you wrap __all__ CUDA API calls (at least in code that you wrote).
 
 (Credit: adapted from [this Stack Overflow post](https://stackoverflow.com/questions/14038589/what-is-the-canonical-way-to-check-for-errors-using-the-cuda-runtime-api))
 
-## 3.4 Hand-in Instructions ##
+## 3.4 Hand-in Instructions
 
 Please submit your work using Gradescope. If you are working with a partner please remember to tag your partner on gradescope.
 
