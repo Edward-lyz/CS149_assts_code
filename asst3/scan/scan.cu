@@ -9,6 +9,8 @@
 #include <thrust/device_ptr.h>
 #include <thrust/device_malloc.h>
 #include <thrust/device_free.h>
+#include <thrust/functional.h>
+#include <thrust/transform.h>
 
 #include "CycleTimer.h"
 
@@ -42,21 +44,63 @@ static inline int nextPow2(int n) {
 // Also, as per the comments in cudaScan(), you can implement an
 // "in-place" scan, since the timing harness makes a copy of input and
 // places it in result
-void exclusive_scan(int* input, int N, int* result)
-{
 
-    // TODO:
-    //
-    // Implement your exclusive scan implementation here.  Keep in
-    // mind that although the arguments to this function are device
-    // allocated arrays, this is a function that is running in a thread
-    // on the CPU.  Your implementation will need to make multiple calls
-    // to CUDA kernel functions (that you must write) to implement the
-    // scan.
-
-
+__global__ void hs_scan_kernel(int* input, int N, int k) {
+    // get the global thread index
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    // check the thread index is within the array bounds
+    if (i < N) {
+        // get the distance to the previous element
+        int offset = 1 << k;
+        // check the previous element exists
+        if (i >= offset) {
+            // perform the scan operation
+            input[i] = input[i] + input[i - offset];
+        }
+    }
 }
 
+__global__ void shift_right_kernel(int* result, int N, int M) {
+    // get the thread index
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    // check the boundary
+    if (i < M) {
+        // if the index is within N, copy the previous element
+        if (i < N) {
+            result[i] = result[i-1];
+        }
+        // if the index is equal to 0, set it to 0
+        else if (i == 0) {
+            result[i] = 0;
+        }
+        // otherwise, do nothing
+    }
+}
+
+void exclusive_scan(int* input, int N, int* result)
+{   
+    // printf("start exclusive scan");s
+    // copy the input array to the result array
+    cudaMemcpy(result, input, N * sizeof(int), cudaMemcpyDeviceToDevice);
+    // get the next power of 2 of N
+    int M = nextPow2(N);
+    // set the block and grid dimensions
+    int blockSize = 256;
+    int gridSize = (M + blockSize - 1) / blockSize;
+    // loop over the log2(M) steps
+    for (int k = 0; k <= log2(M); k++) {
+        // call the scan kernel
+        hs_scan_kernel<<<gridSize, blockSize>>>(result, N, k);
+        // synchronize the device
+        cudaDeviceSynchronize();
+    }
+    // call the shift right kernel with the same grid and block dimensions
+    shift_right_kernel<<<gridSize, blockSize>>>(result, N, M);
+    // synchronize the device
+    cudaDeviceSynchronize();
+    // copy the result array back to the host memory
+    // cudaMemcpy(result+4, result, (N-1) * sizeof(int), cudaMemcpyDeviceToDevice);
+}
 
 //
 // cudaScan --
@@ -81,7 +125,7 @@ double cudaScan(int* inarray, int* end, int* resultarray)
     // the simplicity of a power of two only solution.
 
     int rounded_length = nextPow2(end - inarray);
-    
+    // printf("the rounded_lenth is: %d",rounded_length);
     cudaMalloc((void **)&device_result, sizeof(int) * rounded_length);
     cudaMalloc((void **)&device_input, sizeof(int) * rounded_length);
 
@@ -140,30 +184,80 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration; 
 }
 
-
-// find_repeats --
-//
-// Given an array of integers `device_input`, returns an array of all
-// indices `i` for which `device_input[i] == device_input[i+1]`.
-//
-// Returns the total number of pairs found
-int find_repeats(int* device_input, int length, int* device_output) {
-
-    // TODO:
-    //
-    // Implement this function. You will probably want to
-    // make use of one or more calls to exclusive_scan(), as well as
-    // additional CUDA kernel launches.
-    //    
-    // Note: As in the scan code, the calling code ensures that
-    // allocated arrays are a power of 2 in size, so you can use your
-    // exclusive_scan function with them. However, your implementation
-    // must ensure that the results of find_repeats are correct given
-    // the actual array length.
-
-    return 0; 
+// A kernel function to convert the input array to a flag array
+__global__ void flag_kernel(int* device_input, int* device_flag, int length) {
+    // Get the thread index
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    // Check the boundary
+    if (index < length - 1) {
+        // Compare the current element with the next element
+        if (device_input[index] == device_input[index + 1]) {
+            // Set the flag to 1 if they are equal
+            device_flag[index] = 1;
+        } else {
+            // Set the flag to 0 otherwise
+            device_flag[index] = 0;
+        }
+    }
+    // The last element has no next element, so set the flag to 0
+    if (index == length - 1) {
+        device_flag[index] = 0;
+    }
+    // Synchronize the threads
+    __syncthreads();
 }
 
+// A kernel function to convert the scan array to the output array
+__global__ void output_kernel(int* device_scan, int* device_output, int length) {
+    // Get the thread index
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    // Check the boundary
+    if (index < length) {
+        // Use a shared variable to store the current position of the output array
+        __shared__ int pos;
+        // Initialize the position to 0 in the first thread
+        if (threadIdx.x == 0) {
+            pos = 0;
+        }
+        // Synchronize the threads
+        __syncthreads();
+        // Check if the current element is a flag
+        if (device_scan[index] > device_scan[index - 1]) {
+            // Get the current position of the output array atomically
+            int p = atomicAdd(&pos, 1);
+            // Store the index of the flag to the output array
+            device_output[p] = index;
+        }
+        // Synchronize the threads
+        __syncthreads();
+    }
+}
+
+// A function to find the repeats using exclusive_scan
+int find_repeats(int* device_input, int length, int* device_output) {
+    // Allocate memory for the flag array and the scan array
+    int* device_flag;
+    int* device_scan;
+    cudaMalloc(&device_flag, length * sizeof(int));
+    cudaMalloc(&device_scan, length * sizeof(int));
+    // Define the block size and the grid size
+    int block_size = 256;
+    int grid_size = (length + block_size - 1) / block_size;
+    // Launch the flag kernel
+    flag_kernel<<<grid_size, block_size>>>(device_input, device_flag, length);
+    // Launch the exclusive_scan function
+    exclusive_scan(device_flag, length, device_scan);
+    // Launch the output kernel
+    output_kernel<<<grid_size, block_size>>>(device_scan, device_output, length);
+    // Copy the last element of the scan array to the host memory
+    int result;
+    cudaMemcpy(&result, device_scan + length - 1, sizeof(int), cudaMemcpyDeviceToHost);
+    // Free the allocated memory
+    cudaFree(device_flag);
+    cudaFree(device_scan);
+    // Return the number of pairs found
+    return result;
+}
 
 //
 // cudaFindRepeats --
@@ -190,7 +284,8 @@ double cudaFindRepeats(int *input, int length, int *output, int *output_length) 
     // set output count and results array
     *output_length = result;
     cudaMemcpy(output, device_output, length * sizeof(int), cudaMemcpyDeviceToHost);
-
+    // due to GPU's paralle computing, the result needs to be sorted
+    std::sort(output,output+length);
     cudaFree(device_input);
     cudaFree(device_output);
 
